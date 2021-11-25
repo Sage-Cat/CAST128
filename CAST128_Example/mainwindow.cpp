@@ -1,9 +1,11 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
+#include <QRandomGenerator>
+
 #include <cstdint>
-#include <iostream>
 #include <fstream>
+#include <iostream>
 #include <map>
 #include <vector>
 
@@ -21,7 +23,9 @@ MainWindow::MainWindow(QWidget* parent)
 {
     ui->setupUi(this);
 
-    Cast128::generateKey(outFileKey);
+    QRandomGenerator gen;
+
+    ui->line_key->setText(QString::number(gen.generate64()));
 }
 
 MainWindow::~MainWindow()
@@ -32,9 +36,15 @@ MainWindow::~MainWindow()
 void MainWindow::on_btn_encrypt_clicked()
 {
     {
-        ofstream toInFile(inFileKey);
-        toInFile << ui->textEdit->toPlainText().toStdString();
-        toInFile.close();
+        ofstream out(inFileKey);
+        out << ui->line_msg->text().toStdString();
+        out.close();
+    }
+
+    {
+        ofstream out(keyFileKey);
+        out << ui->line_key->text().toStdString();
+        out.close();
     }
 
     try {
@@ -46,31 +56,43 @@ void MainWindow::on_btn_encrypt_clicked()
             ifstream fromOutFile(outFileKey);
             string text {};
             fromOutFile >> text;
-            ui->textEdit->setText(QString::fromStdString(text));
+            ui->line_encrypted->setText(QString::fromUtf8(QByteArray::fromStdString(text).toHex()));
             fromOutFile.close();
         }
 
-    } catch (exception &e) {
+    } catch (exception& e) {
         std::cout << e.what();
     }
 }
 
 void MainWindow::on_btn_decrypt_clicked()
 {
+    {
+        ofstream out(inFileKey);
+        out << QByteArray::fromHex(ui->line_encrypted->text().toUtf8()).toStdString();
+        out.close();
+    }
+
+    {
+        ofstream out(keyFileKey);
+        out << ui->line_key->text().toStdString();
+        out.close();
+    }
+
     try {
         Cast128::Key key;
         Cast128::readKey(keyFileKey, &key);
-        Cast128::decryptFile(outFileKey, outFileKey, key);
+        Cast128::decryptFile(inFileKey, outFileKey, key);
 
         {
             ifstream fromOutFile(outFileKey);
             string text {};
             fromOutFile >> text;
-            ui->textEdit->setText(QString::fromStdString(text));
+            ui->line_decrypted->setText(QString::fromStdString(text));
             fromOutFile.close();
         }
 
-    } catch (exception &e) {
+    } catch (exception& e) {
         std::cout << e.what();
     }
 }
