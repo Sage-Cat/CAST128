@@ -3,19 +3,13 @@
 
 #include <QRandomGenerator>
 
-#include <cstdint>
-#include <fstream>
-#include <iostream>
-#include <map>
-#include <vector>
+#include <QByteArray>
+#include <QtEndian>
+#include <QIODevice>
 
 #include "cast128.h"
 
 using namespace std;
-
-static string outFileKey { "out.txt" };
-static string inFileKey { "input.txt" };
-static string keyFileKey { "key.txt" };
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -23,9 +17,22 @@ MainWindow::MainWindow(QWidget* parent)
 {
     ui->setupUi(this);
 
-    QRandomGenerator gen;
+    // TEST
+    {
+        // #1
+        CAST128 cast128;
+        static const CAST128::Key KEY = { 0x01234567, 0x12345678, 0x23456789, 0x3456789A };
+        CAST128::Message msg = { 0x01234567, 0x89ABCDEF };
 
-    ui->line_key->setText(QString::number(gen.generate64()));
+        cast128.encrypt( KEY, msg );
+        Q_ASSERT(msg[0] == 0x238B4FE5);
+
+        cast128.decrypt( KEY, msg );
+        Q_ASSERT(msg[0] == 0x01234567);
+    }
+
+    QRandomGenerator gen;
+    ui->line_key->setText(QString::fromUtf8(QByteArray::number(gen.generate64()).toHex()));
 }
 
 MainWindow::~MainWindow()
@@ -35,64 +42,40 @@ MainWindow::~MainWindow()
 
 void MainWindow::on_btn_encrypt_clicked()
 {
+    auto keyStr = QByteArray::fromHex(ui->line_key->text().toUtf8());
+    auto msgStr = ui->line_msg->text().toUtf8();
+
+    msgStr = QByteArray::fromHex("01234567");
+
+    // Create key
+    CAST128::Key key {};
+    QDataStream in(keyStr);
+    for (int i = 0; i < CAST128::KEY_LEN; ++i)
+        in >> key[i];
+
+    // Create message & encrypt
+    QByteArray encrypted {};
+    QDataStream res(&encrypted, QIODevice::ReadWrite);
+    CAST128 cast128;
+    in << msgStr;
+    while (!in.atEnd())
     {
-        ofstream out(inFileKey);
-        out << ui->line_msg->text().toStdString();
-        out.close();
+        CAST128::Message part {};
+
+        for (int i = 0; i < CAST128::MSG_LEN; ++i)
+            in >> key[i - 1];
+
+        cast128.encrypt(key, part);
     }
 
-    {
-        ofstream out(keyFileKey);
-        out << ui->line_key->text().toStdString();
-        out.close();
-    }
-
-    try {
-        Cast128::Key key;
-        Cast128::readKey(keyFileKey, &key);
-        Cast128::encryptFile(inFileKey, outFileKey, key);
-
-        {
-            ifstream fromOutFile(outFileKey);
-            string text {};
-            fromOutFile >> text;
-            ui->line_encrypted->setText(QString::fromUtf8(QByteArray::fromStdString(text).toHex()));
-            fromOutFile.close();
-        }
-
-    } catch (exception& e) {
-        std::cout << e.what();
-    }
+    ui->line_encrypted->setText(QString::fromUtf8(encrypted.toHex()));
 }
 
 void MainWindow::on_btn_decrypt_clicked()
 {
-    {
-        ofstream out(inFileKey);
-        out << QByteArray::fromHex(ui->line_encrypted->text().toUtf8()).toStdString();
-        out.close();
-    }
+    auto encrypted = QByteArray::fromHex(ui->line_encrypted->text().toUtf8());
+    auto key = QByteArray::fromHex(ui->line_key->text().toUtf8());
 
-    {
-        ofstream out(keyFileKey);
-        out << ui->line_key->text().toStdString();
-        out.close();
-    }
 
-    try {
-        Cast128::Key key;
-        Cast128::readKey(keyFileKey, &key);
-        Cast128::decryptFile(inFileKey, outFileKey, key);
-
-        {
-            ifstream fromOutFile(outFileKey);
-            string text {};
-            fromOutFile >> text;
-            ui->line_decrypted->setText(QString::fromStdString(text));
-            fromOutFile.close();
-        }
-
-    } catch (exception& e) {
-        std::cout << e.what();
-    }
+    ui->line_decrypted->setText(QString::fromUtf8(""));
 }

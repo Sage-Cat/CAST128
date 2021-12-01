@@ -147,7 +147,7 @@
            </font>
           </property>
           <property name="text">
-           <string>Key:</string>
+           <string>Key (hex):</string>
           </property>
          </widget>
         </item>

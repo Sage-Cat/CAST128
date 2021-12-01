@@ -1,356 +1,156 @@
 #include "cast128.h"
-#include <bitset>
-#include <fstream>
-#include <iomanip>
-#include <iostream>
-#include <iterator>
-#include <random>
-#include <stdint.h>
-#include <vector>
+
 #include <cstring>
-#include <exception>
+#include <iostream>
+#include <iomanip>
 
-static const uint64_t MOD_2_32 = uint64_t(2) << 31;
-static const bool ENCRYPT = false;
-static const bool DECRYPT = true;
-static const uint8_t PADDING_VALUE = 0x00;
-static const int KEY_BYTE_SIZE = 8;
+static const int ROUND_COUNT = 16;
+static const quint64 MOD_2_32 = quint64( 2 ) << 31;
 
-static const Cast128::uint8 getByteNumber[sizeof(Cast128::Key)] = {
-    3, 2, 1, 0,
-    7, 6, 5, 4,
-    11, 10, 9, 8,
+static const quint8 K_MAP[ sizeof( CAST128::Key ) ] = {
+     3,  2,  1,  0,
+     7,  6,  5,  4,
+    11, 10,  9,  8,
     15, 14, 13, 12
 };
 
-Cast128::uint8 Cast128::getByte(Cast128::Key key, Cast128::uint8 i)
-{
-    return ((Cast128::uint8*)key)[getByteNumber[i]];
+static quint8 g( const CAST128::Key key, quint8 i ) {
+    return ( ( quint8* ) key )[ K_MAP[ i ] ];
 }
 
-void setByte(Cast128::Block& bl, uint8_t pos, uint8_t byte)
-{
-    ((uint8_t*)bl.Msg)[getByteNumber[pos]] = byte;
+static void splitI( quint32 I, quint8* Ia, quint8* Ib, quint8* Ic, quint8* Id ) {
+    *Ia = ( I >> 24 ) & 0xFF;
+    *Ib = ( I >> 16 ) & 0xFF;
+    *Ic = ( I >> 8  ) & 0xFF;
+    *Id = ( I       ) & 0xFF;
 }
 
-void Cast128::splitI(uint I, uint8* Ia, uint8* Ib, uint8* Ic, uint8* Id)
-{
-    *Ia = (I >> 24) & 0xFF;
-    *Ib = (I >> 16) & 0xFF;
-    *Ic = (I >> 8) & 0xFF;
-    *Id = (I)&0xFF;
+static quint32 sumMod2_32( quint32 a, quint32 b ) {
+    return ( quint64( a ) + quint64( b ) ) % MOD_2_32;
 }
 
-Cast128::uint Cast128::sumMod2_32(const uint a, const uint b)
-{
-    return (uint64_t(a) + uint64_t(b)) % MOD_2_32;
-}
-
-Cast128::uint Cast128::subtractMod2_32(uint a, uint b)
-{
-    if (b <= a) {
+static quint32 subtractMod2_32( quint32 a, quint32 b ) {
+    if( b <= a ) {
         return a - b;
     }
 
-    return (MOD_2_32 + a) - b;
+    return ( MOD_2_32 + a ) - b;
 }
 
-Cast128::uint Cast128::cyclicShift(const uint x, const uint8 shift)
-{
-    uint8 s = shift % 32;
-    return (x << s) | (x >> (32 - s));
+static quint32 cyclicShift( quint32 x, quint8 shift ) {
+    quint8 s = shift % 32;
+    return ( x << s ) | ( x >> ( 32 - s ) );
 }
 
-Cast128::uint* Cast128::generateKeys(const Cast128::Key key)
-{
-    Cast128::Key tmpKey = {};
-    Cast128::Key originKey;
-    std::memcpy(originKey, key, sizeof(Key));
-    Cast128::uint *keys = new Cast128::uint[keysCount];
-    for(int i = 0; i < keysCount; ++i)
-        keys[i] = 0;
+// ****************************************************************************************************
+// ****************************************************************************************************
 
-    for (int i = 0; i < 2; ++i) {
-        tmpKey[0] = originKey[0] ^ S5[getByte(originKey, 0xD)] ^ S6[getByte(originKey, 0xF)] ^ S7[getByte(originKey, 0xC)] ^ S8[getByte(originKey, 0xE)] ^ S7[getByte(originKey, 0x8)];
-        tmpKey[1] = originKey[2] ^ S5[getByte(tmpKey, 0x0)] ^ S6[getByte(tmpKey, 0x2)] ^ S7[getByte(tmpKey, 0x1)] ^ S8[getByte(tmpKey, 0x3)] ^ S8[getByte(originKey, 0xA)];
-        tmpKey[2] = originKey[3] ^ S5[getByte(tmpKey, 0x7)] ^ S6[getByte(tmpKey, 0x6)] ^ S7[getByte(tmpKey, 0x5)] ^ S8[getByte(tmpKey, 0x4)] ^ S5[getByte(originKey, 0x9)];
-        tmpKey[3] = originKey[1] ^ S5[getByte(tmpKey, 0xA)] ^ S6[getByte(tmpKey, 0x9)] ^ S7[getByte(tmpKey, 0xB)] ^ S8[getByte(tmpKey, 0x8)] ^ S6[getByte(originKey, 0xB)];
+CAST128::CAST128() {
+}
 
-        keys[0 + i * 16] = S5[getByte(tmpKey, 0x8)] ^ S6[getByte(tmpKey, 0x9)] ^ S7[getByte(tmpKey, 0x7)] ^ S8[getByte(tmpKey, 0x6)] ^ S5[getByte(tmpKey, 0x2)];
-        keys[1 + i * 16] = S5[getByte(tmpKey, 0xA)] ^ S6[getByte(tmpKey, 0xB)] ^ S7[getByte(tmpKey, 0x5)] ^ S8[getByte(tmpKey, 0x4)] ^ S6[getByte(tmpKey, 0x6)];
-        keys[2 + i * 16] = S5[getByte(tmpKey, 0xC)] ^ S6[getByte(tmpKey, 0xD)] ^ S7[getByte(tmpKey, 0x3)] ^ S8[getByte(tmpKey, 0x2)] ^ S7[getByte(tmpKey, 0x9)];
-        keys[3 + i * 16] = S5[getByte(tmpKey, 0xE)] ^ S6[getByte(tmpKey, 0xF)] ^ S7[getByte(tmpKey, 0x1)] ^ S8[getByte(tmpKey, 0x0)] ^ S8[getByte(tmpKey, 0xC)];
+void CAST128::encrypt( const CAST128::Key key, CAST128::Message msg ) {
+    run( key, msg );
+}
 
-        originKey[0] = tmpKey[2] ^ S5[getByte(tmpKey, 0x5)] ^ S6[getByte(tmpKey, 0x7)] ^ S7[getByte(tmpKey, 0x4)] ^ S8[getByte(tmpKey, 0x6)] ^ S7[getByte(tmpKey, 0x0)];
-        originKey[1] = tmpKey[0] ^ S5[getByte(originKey, 0x0)] ^ S6[getByte(originKey, 0x2)] ^ S7[getByte(originKey, 0x1)] ^ S8[getByte(originKey, 0x3)] ^ S8[getByte(tmpKey, 0x2)];
-        originKey[2] = tmpKey[1] ^ S5[getByte(originKey, 0x7)] ^ S6[getByte(originKey, 0x6)] ^ S7[getByte(originKey, 0x5)] ^ S8[getByte(originKey, 0x4)] ^ S5[getByte(tmpKey, 0x1)];
-        originKey[3] = tmpKey[3] ^ S5[getByte(originKey, 0xA)] ^ S6[getByte(originKey, 0x9)] ^ S7[getByte(originKey, 0xB)] ^ S8[getByte(originKey, 0x8)] ^ S6[getByte(tmpKey, 0x3)];
+void CAST128::decrypt( const CAST128::Key key, CAST128::Message msg ) {
+    run( key, msg, true );
+}
 
-        keys[4 + i * 16] = S5[getByte(originKey, 0x3)] ^ S6[getByte(originKey, 0x2)] ^ S7[getByte(originKey, 0xC)] ^ S8[getByte(originKey, 0xD)] ^ S5[getByte(originKey, 0x8)];
-        keys[5 + i * 16] = S5[getByte(originKey, 0x1)] ^ S6[getByte(originKey, 0x0)] ^ S7[getByte(originKey, 0xE)] ^ S8[getByte(originKey, 0xF)] ^ S6[getByte(originKey, 0xD)];
-        keys[6 + i * 16] = S5[getByte(originKey, 0x7)] ^ S6[getByte(originKey, 0x6)] ^ S7[getByte(originKey, 0x8)] ^ S8[getByte(originKey, 0x9)] ^ S7[getByte(originKey, 0x3)];
-        keys[7 + i * 16] = S5[getByte(originKey, 0x5)] ^ S6[getByte(originKey, 0x4)] ^ S7[getByte(originKey, 0xA)] ^ S8[getByte(originKey, 0xB)] ^ S8[getByte(originKey, 0x7)];
+void CAST128::run( const CAST128::Key key, CAST128::Message msg, bool reverse ) {
+    Key x = { 0 };
+    memcpy( x, key, sizeof( Key ) );
 
-        tmpKey[0] = originKey[0] ^ S5[getByte(originKey, 0xD)] ^ S6[getByte(originKey, 0xF)] ^ S7[getByte(originKey, 0xC)] ^ S8[getByte(originKey, 0xE)] ^ S7[getByte(originKey, 0x8)];
-        tmpKey[1] = originKey[2] ^ S5[getByte(tmpKey, 0x0)] ^ S6[getByte(tmpKey, 0x2)] ^ S7[getByte(tmpKey, 0x1)] ^ S8[getByte(tmpKey, 0x3)] ^ S8[getByte(originKey, 0xA)];
-        tmpKey[2] = originKey[3] ^ S5[getByte(tmpKey, 0x7)] ^ S6[getByte(tmpKey, 0x6)] ^ S7[getByte(tmpKey, 0x5)] ^ S8[getByte(tmpKey, 0x4)] ^ S5[getByte(originKey, 0x9)];
-        tmpKey[3] = originKey[1] ^ S5[getByte(tmpKey, 0xA)] ^ S6[getByte(tmpKey, 0x9)] ^ S7[getByte(tmpKey, 0xB)] ^ S8[getByte(tmpKey, 0x8)] ^ S6[getByte(originKey, 0xB)];
+    Key z = { 0 };
 
-        keys[8 + i * 16] = S5[getByte(tmpKey, 0x3)] ^ S6[getByte(tmpKey, 0x2)] ^ S7[getByte(tmpKey, 0xC)] ^ S8[getByte(tmpKey, 0xD)] ^ S5[getByte(tmpKey, 0x9)];
-        keys[9 + i * 16] = S5[getByte(tmpKey, 0x1)] ^ S6[getByte(tmpKey, 0x0)] ^ S7[getByte(tmpKey, 0xE)] ^ S8[getByte(tmpKey, 0xF)] ^ S6[getByte(tmpKey, 0xC)];
-        keys[10 + i * 16] = S5[getByte(tmpKey, 0x7)] ^ S6[getByte(tmpKey, 0x6)] ^ S7[getByte(tmpKey, 0x8)] ^ S8[getByte(tmpKey, 0x9)] ^ S7[getByte(tmpKey, 0x2)];
-        keys[11 + i * 16] = S5[getByte(tmpKey, 0x5)] ^ S6[getByte(tmpKey, 0x4)] ^ S7[getByte(tmpKey, 0xA)] ^ S8[getByte(tmpKey, 0xB)] ^ S8[getByte(tmpKey, 0x6)];
+    quint32 K[ 32 ] = { 0 };
 
-        originKey[0] = tmpKey[2] ^ S5[getByte(tmpKey, 0x5)] ^ S6[getByte(tmpKey, 0x7)] ^ S7[getByte(tmpKey, 0x4)] ^ S8[getByte(tmpKey, 0x6)] ^ S7[getByte(tmpKey, 0x0)];
-        originKey[1] = tmpKey[0] ^ S5[getByte(originKey, 0x0)] ^ S6[getByte(originKey, 0x2)] ^ S7[getByte(originKey, 0x1)] ^ S8[getByte(originKey, 0x3)] ^ S8[getByte(tmpKey, 0x2)];
-        originKey[2] = tmpKey[1] ^ S5[getByte(originKey, 0x7)] ^ S6[getByte(originKey, 0x6)] ^ S7[getByte(originKey, 0x5)] ^ S8[getByte(originKey, 0x4)] ^ S5[getByte(tmpKey, 0x1)];
-        originKey[3] = tmpKey[3] ^ S5[getByte(originKey, 0xA)] ^ S6[getByte(originKey, 0x9)] ^ S7[getByte(originKey, 0xB)] ^ S8[getByte(originKey, 0x8)] ^ S6[getByte(tmpKey, 0x3)];
+    for( int i = 0; i < 2; ++i ) {
+        z[ 0 ] = x[ 0 ] ^ S5[ g( x, 0xD ) ] ^ S6[ g( x, 0xF ) ] ^ S7[ g( x, 0xC ) ] ^ S8[ g( x, 0xE ) ] ^ S7[ g( x, 0x8 ) ];
+        z[ 1 ] = x[ 2 ] ^ S5[ g( z, 0x0 ) ] ^ S6[ g( z, 0x2 ) ] ^ S7[ g( z, 0x1 ) ] ^ S8[ g( z, 0x3 ) ] ^ S8[ g( x, 0xA ) ];
+        z[ 2 ] = x[ 3 ] ^ S5[ g( z, 0x7 ) ] ^ S6[ g( z, 0x6 ) ] ^ S7[ g( z, 0x5 ) ] ^ S8[ g( z, 0x4 ) ] ^ S5[ g( x, 0x9 ) ];
+        z[ 3 ] = x[ 1 ] ^ S5[ g( z, 0xA ) ] ^ S6[ g( z, 0x9 ) ] ^ S7[ g( z, 0xB ) ] ^ S8[ g( z, 0x8 ) ] ^ S6[ g( x, 0xB ) ];
 
-        keys[12 + i * 16] = S5[getByte(originKey, 0x8)] ^ S6[getByte(originKey, 0x9)] ^ S7[getByte(originKey, 0x7)] ^ S8[getByte(originKey, 0x6)] ^ S5[getByte(originKey, 0x3)];
-        keys[13 + i * 16] = S5[getByte(originKey, 0xA)] ^ S6[getByte(originKey, 0xB)] ^ S7[getByte(originKey, 0x5)] ^ S8[getByte(originKey, 0x4)] ^ S6[getByte(originKey, 0x7)];
-        keys[14 + i * 16] = S5[getByte(originKey, 0xC)] ^ S6[getByte(originKey, 0xD)] ^ S7[getByte(originKey, 0x3)] ^ S8[getByte(originKey, 0x2)] ^ S7[getByte(originKey, 0x8)];
-        keys[15 + i * 16] = S5[getByte(originKey, 0xE)] ^ S6[getByte(originKey, 0xF)] ^ S7[getByte(originKey, 0x1)] ^ S8[getByte(originKey, 0x0)] ^ S8[getByte(originKey, 0xD)];
+        K[ 0 + i * 16 ] = S5[ g( z, 0x8 ) ] ^ S6[ g( z, 0x9 ) ] ^ S7[ g( z, 0x7 ) ] ^ S8[ g( z, 0x6 ) ] ^ S5[ g( z, 0x2 ) ];
+        K[ 1 + i * 16 ] = S5[ g( z, 0xA ) ] ^ S6[ g( z, 0xB ) ] ^ S7[ g( z, 0x5 ) ] ^ S8[ g( z, 0x4 ) ] ^ S6[ g( z, 0x6 ) ];
+        K[ 2 + i * 16 ] = S5[ g( z, 0xC ) ] ^ S6[ g( z, 0xD ) ] ^ S7[ g( z, 0x3 ) ] ^ S8[ g( z, 0x2 ) ] ^ S7[ g( z, 0x9 ) ];
+        K[ 3 + i * 16 ] = S5[ g( z, 0xE ) ] ^ S6[ g( z, 0xF ) ] ^ S7[ g( z, 0x1 ) ] ^ S8[ g( z, 0x0 ) ] ^ S8[ g( z, 0xC ) ];
+
+        x[ 0 ] = z[ 2 ] ^ S5[ g( z, 0x5 ) ] ^ S6[ g( z, 0x7 ) ] ^ S7[ g( z, 0x4 ) ] ^ S8[ g( z, 0x6 ) ] ^ S7[ g( z, 0x0 ) ];
+        x[ 1 ] = z[ 0 ] ^ S5[ g( x, 0x0 ) ] ^ S6[ g( x, 0x2 ) ] ^ S7[ g( x, 0x1 ) ] ^ S8[ g( x, 0x3 ) ] ^ S8[ g( z, 0x2 ) ];
+        x[ 2 ] = z[ 1 ] ^ S5[ g( x, 0x7 ) ] ^ S6[ g( x, 0x6 ) ] ^ S7[ g( x, 0x5 ) ] ^ S8[ g( x, 0x4 ) ] ^ S5[ g( z, 0x1 ) ];
+        x[ 3 ] = z[ 3 ] ^ S5[ g( x, 0xA ) ] ^ S6[ g( x, 0x9 ) ] ^ S7[ g( x, 0xB ) ] ^ S8[ g( x, 0x8 ) ] ^ S6[ g( z, 0x3 ) ];
+
+        K[ 4 + i * 16 ] = S5[ g( x, 0x3 ) ] ^ S6[ g( x, 0x2 ) ] ^ S7[ g( x, 0xC ) ] ^ S8[ g( x, 0xD ) ] ^ S5[ g( x, 0x8 ) ];
+        K[ 5 + i * 16 ] = S5[ g( x, 0x1 ) ] ^ S6[ g( x, 0x0 ) ] ^ S7[ g( x, 0xE ) ] ^ S8[ g( x, 0xF ) ] ^ S6[ g( x, 0xD ) ];
+        K[ 6 + i * 16 ] = S5[ g( x, 0x7 ) ] ^ S6[ g( x, 0x6 ) ] ^ S7[ g( x, 0x8 ) ] ^ S8[ g( x, 0x9 ) ] ^ S7[ g( x, 0x3 ) ];
+        K[ 7 + i * 16 ] = S5[ g( x, 0x5 ) ] ^ S6[ g( x, 0x4 ) ] ^ S7[ g( x, 0xA ) ] ^ S8[ g( x, 0xB ) ] ^ S8[ g( x, 0x7 ) ];
+
+        z[ 0 ] = x[ 0 ] ^ S5[ g( x, 0xD ) ] ^ S6[ g( x, 0xF ) ] ^ S7[ g( x, 0xC ) ] ^ S8[ g( x, 0xE ) ] ^ S7[ g( x, 0x8 ) ];
+        z[ 1 ] = x[ 2 ] ^ S5[ g( z, 0x0 ) ] ^ S6[ g( z, 0x2 ) ] ^ S7[ g( z, 0x1 ) ] ^ S8[ g( z, 0x3 ) ] ^ S8[ g( x, 0xA ) ];
+        z[ 2 ] = x[ 3 ] ^ S5[ g( z, 0x7 ) ] ^ S6[ g( z, 0x6 ) ] ^ S7[ g( z, 0x5 ) ] ^ S8[ g( z, 0x4 ) ] ^ S5[ g( x, 0x9 ) ];
+        z[ 3 ] = x[ 1 ] ^ S5[ g( z, 0xA ) ] ^ S6[ g( z, 0x9 ) ] ^ S7[ g( z, 0xB ) ] ^ S8[ g( z, 0x8 ) ] ^ S6[ g( x, 0xB ) ];
+
+        K[ 8  + i * 16 ] = S5[ g( z, 0x3 ) ] ^ S6[ g( z, 0x2 ) ] ^ S7[ g( z, 0xC ) ] ^ S8[ g( z, 0xD ) ] ^ S5[ g( z, 0x9 ) ];
+        K[ 9  + i * 16 ] = S5[ g( z, 0x1 ) ] ^ S6[ g( z, 0x0 ) ] ^ S7[ g( z, 0xE ) ] ^ S8[ g( z, 0xF ) ] ^ S6[ g( z, 0xC ) ];
+        K[ 10 + i * 16 ] = S5[ g( z, 0x7 ) ] ^ S6[ g( z, 0x6 ) ] ^ S7[ g( z, 0x8 ) ] ^ S8[ g( z, 0x9 ) ] ^ S7[ g( z, 0x2 ) ];
+        K[ 11 + i * 16 ] = S5[ g( z, 0x5 ) ] ^ S6[ g( z, 0x4 ) ] ^ S7[ g( z, 0xA ) ] ^ S8[ g( z, 0xB ) ] ^ S8[ g( z, 0x6 ) ];
+
+        x[ 0 ] = z[ 2 ] ^ S5[ g( z, 0x5 ) ] ^ S6[ g( z, 0x7 ) ] ^ S7[ g( z, 0x4 ) ] ^ S8[ g( z, 0x6 ) ] ^ S7[ g( z, 0x0 ) ];
+        x[ 1 ] = z[ 0 ] ^ S5[ g( x, 0x0 ) ] ^ S6[ g( x, 0x2 ) ] ^ S7[ g( x, 0x1 ) ] ^ S8[ g( x, 0x3 ) ] ^ S8[ g( z, 0x2 ) ];
+        x[ 2 ] = z[ 1 ] ^ S5[ g( x, 0x7 ) ] ^ S6[ g( x, 0x6 ) ] ^ S7[ g( x, 0x5 ) ] ^ S8[ g( x, 0x4 ) ] ^ S5[ g( z, 0x1 ) ];
+        x[ 3 ] = z[ 3 ] ^ S5[ g( x, 0xA ) ] ^ S6[ g( x, 0x9 ) ] ^ S7[ g( x, 0xB ) ] ^ S8[ g( x, 0x8 ) ] ^ S6[ g( z, 0x3 ) ];
+
+        K[ 12 + i * 16 ] = S5[ g( x, 0x8 ) ] ^ S6[ g( x, 0x9 ) ] ^ S7[ g( x, 0x7 ) ] ^ S8[ g( x, 0x6 ) ] ^ S5[ g( x, 0x3 ) ];
+        K[ 13 + i * 16 ] = S5[ g( x, 0xA ) ] ^ S6[ g( x, 0xB ) ] ^ S7[ g( x, 0x5 ) ] ^ S8[ g( x, 0x4 ) ] ^ S6[ g( x, 0x7 ) ];
+        K[ 14 + i * 16 ] = S5[ g( x, 0xC ) ] ^ S6[ g( x, 0xD ) ] ^ S7[ g( x, 0x3 ) ] ^ S8[ g( x, 0x2 ) ] ^ S7[ g( x, 0x8 ) ];
+        K[ 15 + i * 16 ] = S5[ g( x, 0xE ) ] ^ S6[ g( x, 0xF ) ] ^ S7[ g( x, 0x1 ) ] ^ S8[ g( x, 0x0 ) ] ^ S8[ g( x, 0xD ) ];
     }
-    return keys;
-}
 
-Cast128::Block Cast128::go(const Key key, const Block Block, bool isEncrypt)
-{
-    Cast128::uint* tmp;
-    tmp = generateKeys(key);
-    Cast128::uint K[keysCount];
-    for (int i = 0; i < keysCount; ++i) {
-        K[i] = tmp[i];
-    }
+    quint32 L[ ROUND_COUNT + 1 ] = { 0 };
+    L[ 0 ] = msg[ 0 ];
 
-    uint L[roundCount + 1] = { 0 };
-    uint R[roundCount + 1] = { 0 };
-    L[0] = Block.Msg[0];
-    R[0] = Block.Msg[1];
+    quint32 R[ ROUND_COUNT + 1 ] = { 0 };
+    R[ 0 ] = msg[ 1 ];
 
-    for (int i = 0; i < roundCount; ++i) {
-        int rIndex = isEncrypt ? (roundCount - 1 - i) : i;
-        uint Kmi = K[rIndex];
-        uint8 Kri = K[16 + rIndex] & 0x1F;
+    for( int i = 0; i < ROUND_COUNT; ++i ) {
+        int rIndex = reverse ? ( ROUND_COUNT - 1 - i ) : i;
+        quint32 Kmi = K[ rIndex ];
+        quint8  Kri = K[ 16 + rIndex ] & 0x1F;
 
-        uint I = 0;
-        uint f = 0;
+        quint32 I = 0;
+        quint32 f = 0;
 
-        uint8 Ia, Ib, Ic, Id;
+        quint8 Ia, Ib, Ic, Id;
 
-        switch (rIndex % 3) {
+        switch( rIndex % 3 ) {
         case 0:
-            I = cyclicShift(sumMod2_32(Kmi, R[i]), Kri);
-            splitI(I, &Ia, &Ib, &Ic, &Id);
-            f = sumMod2_32(subtractMod2_32(S1[Ia] ^ S2[Ib], S3[Ic]), S4[Id]);
+            I = cyclicShift( sumMod2_32( Kmi, R[ i ] ), Kri );
+            splitI( I, &Ia, &Ib, &Ic, &Id );
+            f = sumMod2_32( subtractMod2_32( S1[ Ia ] ^ S2[ Ib ], S3[ Ic ] ), S4[ Id ] );
             break;
+
         case 1:
-            I = cyclicShift(Kmi ^ R[i], Kri);
-            splitI(I, &Ia, &Ib, &Ic, &Id);
-            f = sumMod2_32(subtractMod2_32(S1[Ia], S2[Ib]), S3[Ic]) ^ S4[Id];
+            I = cyclicShift( Kmi ^ R[ i ], Kri );
+            splitI( I, &Ia, &Ib, &Ic, &Id );
+            f = sumMod2_32( subtractMod2_32( S1[ Ia ], S2[ Ib ] ), S3[ Ic ] ) ^ S4[ Id ];
             break;
 
         case 2:
-            I = cyclicShift(subtractMod2_32(Kmi, R[i]), Kri);
-            splitI(I, &Ia, &Ib, &Ic, &Id);
-            f = subtractMod2_32(sumMod2_32(S1[Ia], S2[Ib]) ^ S3[Ic], S4[Id]);
+            I = cyclicShift( subtractMod2_32( Kmi, R[ i ] ), Kri );
+            splitI( I, &Ia, &Ib, &Ic, &Id );
+            f = subtractMod2_32( sumMod2_32( S1[ Ia ], S2[ Ib ] ) ^ S3[ Ic ], S4[ Id ] );
             break;
         }
 
-        L[i + 1] = R[i];
-        R[i + 1] = L[i] ^ f;
+        L[ i + 1 ] = R[ i ];
+        R[ i + 1 ] = L[ i ] ^ f;
     }
-    Cast128::Block res;
-    res.Msg[1] = L[roundCount];
-    res.Msg[0] = R[roundCount];
-    return res;
+
+    msg[ 0 ] = R[ ROUND_COUNT ];
+    msg[ 1 ] = L[ ROUND_COUNT ];
 }
 
-Cast128::Block Cast128::encrypt(const Key key, const Block Block)
-{
-    return go(key, Block, ENCRYPT);
-}
-
-Cast128::Block Cast128::decrypt(const Key key, const Block Block)
-{
-    return go(key, Block, DECRYPT);
-}
-
-void addPadding(std::vector<char>& v)
-{
-    int countPaddingByte = v.size() % 8;
-    if (countPaddingByte == 0) {
-        return;
-    }
-    char* tmpArray = new char[countPaddingByte];
-    for (int i = 0; i < 8 - countPaddingByte; ++i) {
-        v.push_back(PADDING_VALUE);
-    }
-}
-
-void Cast128::writeLastBlock(std::ofstream& out, Cast128::Block v)
-{
-    char res[8];
-    for (int i = 0; i < 8; ++i) {
-        res[i] = getByte(v.Msg, i);
-    }
-    int coutPaddingBytes = 0;
-    for (int i = 8 - 1; i >= 1; --i) {
-        if (res[i] == PADDING_VALUE) {
-            coutPaddingBytes++;
-        } else {
-            break;
-        }
-    }
-    for (int i = 0; i < 8 - coutPaddingBytes; ++i) {
-        out.write((char*)(&res[i]), sizeof(char));
-    }
-}
-
-void Cast128::encryptFile(std::string inputFileName, std::string outFileName, Cast128::Key key)
-{
-    std::ifstream inputFile(inputFileName, std::ios::binary | std::ios::in);
-    if (!inputFile.is_open()) {
-        throw std::exception();
-        return;
-    }
-    std::vector<char> res((std::istreambuf_iterator<char>(inputFile)),
-        std::istreambuf_iterator<char>());
-    addPadding(res);
-    int blocksCount = res.size() / 8;
-    std::vector<Block> blockVector;
-    for (int i = 0; i < blocksCount; ++i) {
-        Block block = { 0, 0 };
-        for (int j = 7, z = 0; j >= 0; --j, z++) {
-            setByte(block, z, res[i * 8 + z]);
-        }
-        blockVector.push_back(block);
-    }
-    std::ofstream out(outFileName, std::ios::binary);
-    for (int i = 0; i < blockVector.size(); ++i) {
-        Block encrypredBlock = encrypt(key, blockVector[i]);
-        for (int i = 0; i < 8; ++i) {
-            uint8_t tmp = getByte(encrypredBlock.Msg, i);
-            out.write((char*)(&tmp), sizeof(char));
-        }
-    }
-}
-
-void Cast128::decryptFile(std::string inputFileName, std::string outFileName, Cast128::Key key)
-{
-    std::ifstream inputFile(inputFileName, std::ios::binary | std::ios::in);
-    if (!inputFile.is_open()) {
-        throw std::exception();
-        return;
-    }
-    std::vector<char> res((std::istreambuf_iterator<char>(inputFile)),
-        std::istreambuf_iterator<char>());
-    addPadding(res);
-    int blocksCount = res.size() / 8;
-    std::vector<Block> blockVector;
-    for (int i = 0; i < blocksCount; ++i) {
-        Block block = { 0, 0 };
-        for (int j = 7, z = 0; j >= 0; --j, z++) {
-
-            setByte(block, z, res[i * 8 + z]);
-        }
-        blockVector.push_back(block);
-    }
-    std::ofstream out(outFileName, std::ios::binary);
-    for (int i = 0; i < blockVector.size() - 1; ++i) {
-        Block encrypredBlock = decrypt(key, blockVector[i]);
-        for (int i = 0; i < 8; ++i) {
-            uint8_t tmp = getByte(encrypredBlock.Msg, i);
-            out.write((char*)(&tmp), sizeof(char));
-        }
-    }
-    Block encrypredBlock = decrypt(key, blockVector[blockVector.size() - 1]);
-    writeLastBlock(out, encrypredBlock);
-}
-
-void Cast128::correlation(std::string src, std::string encr)
-{
-    std::ifstream inputFile(src, std::ios::binary | std::ios::in);
-    if (!inputFile.is_open()) {
-        throw std::exception();
-    }
-    std::ifstream outFile(encr, std::ios::binary | std::ios::in);
-    if (!outFile.is_open()) {
-        throw std::exception();
-    }
-
-    std::vector<char> res((std::istreambuf_iterator<char>(inputFile)),
-        std::istreambuf_iterator<char>());
-    std::vector<char> res2((std::istreambuf_iterator<char>(outFile)),
-        std::istreambuf_iterator<char>());
-
-    int fileDiff = res2.size() - res.size();
-    for (int i = 0; i < abs(fileDiff); ++i) {
-        if (fileDiff > 0) {
-            res2.pop_back();
-        }
-    }
-
-    double averageX = 0;
-    for (auto var : res) {
-        std::bitset<8> bit(var);
-        averageX += bit.count();
-    }
-    averageX /= res.size() * 8;
-
-    double averageY = 0;
-    for (auto var : res2) {
-        std::bitset<8> bit(var);
-        averageY += bit.count();
-    }
-    averageY /= res.size() * 8;
-
-    double correlationTop = 0.0;
-    double correlationBottom = 0.0;
-    for (int i = 0; i < res.size(); ++i) {
-        for (int j = 0; j < 8; ++j) {
-            std::bitset<8> bitX(res[i]);
-            std::bitset<8> bitY(res2[i]);
-            bool x = bitX[j];
-            bool y = bitY[j];
-            correlationTop += ((x - averageX) * (y - averageY));
-            correlationBottom += sqrt(pow(x - averageX, 2) * pow(y - averageY, 2));
-        }
-    }
-    std::cout << "correlation = " << std::abs(correlationTop / correlationBottom);
-}
-
-void Cast128::readKey(const std::string path, Cast128::Key* key)
-{
-    std::ifstream keyFile(path);
-    if (!keyFile.is_open()) {
-        return;
-    }
-    std::vector<char> res((std::istreambuf_iterator<char>(keyFile)),
-        std::istreambuf_iterator<char>());
-    if (res.size() < keyLength / 8) {
-        throw std::exception();
-    }
-    for (int i = keyLength / 8 - 1; i >= 0; --i) {
-        ((uint8_t*)(*key))[getByteNumber[i]] = res[i];
-    }
-}
-
-void Cast128::generateKey(std::string outFileName)
-{
-    Cast128::Key key;
-    std::srand(std::time(0));
-    for (int i = 0; i < 4; ++i) {
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_int_distribution<uint32_t> dis(0, UINT32_MAX);
-        (key)[i] = dis(gen);
-    }
-    std::ofstream outFile(outFileName);
-    outFile.write((char*)(&key), sizeof(key));
-}
-
-const Cast128::sBlock Cast128::S1 = {
+const CAST128::SType CAST128::S1 = {
     0x30fb40d4, 0x9fa0ff0b, 0x6beccd2f, 0x3f258c7a, 0x1e213f2f, 0x9c004dd3, 0x6003e540, 0xcf9fc949,
     0xbfd4af27, 0x88bbbdb5, 0xe2034090, 0x98d09675, 0x6e63a0e0, 0x15c361d2, 0xc2e7661d, 0x22d4ff8e,
     0x28683b6f, 0xc07fd059, 0xff2379c8, 0x775f50e2, 0x43c340d3, 0xdf2f8656, 0x887ca41a, 0xa2d2bd2d,
@@ -385,7 +185,7 @@ const Cast128::sBlock Cast128::S1 = {
     0x1a69e783, 0x02cc4843, 0xa2f7c579, 0x429ef47d, 0x427b169c, 0x5ac9f049, 0xdd8f0f00, 0x5c8165bf
 };
 
-const Cast128::sBlock Cast128::S2 = {
+const CAST128::SType CAST128::S2 = {
     0x1f201094, 0xef0ba75b, 0x69e3cf7e, 0x393f4380, 0xfe61cf7a, 0xeec5207a, 0x55889c94, 0x72fc0651,
     0xada7ef79, 0x4e1d7235, 0xd55a63ce, 0xde0436ba, 0x99c430ef, 0x5f0c0794, 0x18dcdb7d, 0xa1d6eff3,
     0xa0b52f7b, 0x59e83605, 0xee15b094, 0xe9ffd909, 0xdc440086, 0xef944459, 0xba83ccb3, 0xe0c3cdfb,
@@ -420,7 +220,7 @@ const Cast128::sBlock Cast128::S2 = {
     0x43d79572, 0x7e6dd07c, 0x06dfdf1e, 0x6c6cc4ef, 0x7160a539, 0x73bfbe70, 0x83877605, 0x4523ecf1
 };
 
-const Cast128::sBlock Cast128::S3 = {
+const CAST128::SType CAST128::S3 = {
     0x8defc240, 0x25fa5d9f, 0xeb903dbf, 0xe810c907, 0x47607fff, 0x369fe44b, 0x8c1fc644, 0xaececa90,
     0xbeb1f9bf, 0xeefbcaea, 0xe8cf1950, 0x51df07ae, 0x920e8806, 0xf0ad0548, 0xe13c8d83, 0x927010d5,
     0x11107d9f, 0x07647db9, 0xb2e3e4d4, 0x3d4f285e, 0xb9afa820, 0xfade82e0, 0xa067268b, 0x8272792e,
@@ -455,7 +255,7 @@ const Cast128::sBlock Cast128::S3 = {
     0xf7baefd5, 0x4142ed9c, 0xa4315c11, 0x83323ec5, 0xdfef4636, 0xa133c501, 0xe9d3531c, 0xee353783
 };
 
-const Cast128::sBlock Cast128::S4 = {
+const CAST128::SType CAST128::S4 = {
     0x9db30420, 0x1fb6e9de, 0xa7be7bef, 0xd273a298, 0x4a4f7bdb, 0x64ad8c57, 0x85510443, 0xfa020ed1,
     0x7e287aff, 0xe60fb663, 0x095f35a1, 0x79ebf120, 0xfd059d43, 0x6497b7b1, 0xf3641f63, 0x241e4adf,
     0x28147f5f, 0x4fa2b8cd, 0xc9430040, 0x0cc32220, 0xfdd30b30, 0xc0a5374f, 0x1d2d00d9, 0x24147b15,
@@ -490,7 +290,7 @@ const Cast128::sBlock Cast128::S4 = {
     0x7ae5290c, 0x3cb9536b, 0x851e20fe, 0x9833557e, 0x13ecf0b0, 0xd3ffb372, 0x3f85c5c1, 0x0aef7ed2
 };
 
-const Cast128::sBlock Cast128::S5 = {
+const CAST128::SType CAST128::S5 = {
     0x7ec90c04, 0x2c6e74b9, 0x9b0e66df, 0xa6337911, 0xb86a7fff, 0x1dd358f5, 0x44dd9d44, 0x1731167f,
     0x08fbf1fa, 0xe7f511cc, 0xd2051b00, 0x735aba00, 0x2ab722d8, 0x386381cb, 0xacf6243a, 0x69befd7a,
     0xe6a2e77f, 0xf0c720cd, 0xc4494816, 0xccf5c180, 0x38851640, 0x15b0a848, 0xe68b18cb, 0x4caadeff,
@@ -525,7 +325,7 @@ const Cast128::sBlock Cast128::S5 = {
     0xe822fe15, 0x88570983, 0x750e6249, 0xda627e55, 0x5e76ffa8, 0xb1534546, 0x6d47de08, 0xefe9e7d4
 };
 
-const Cast128::sBlock Cast128::S6 = {
+const CAST128::SType CAST128::S6 = {
     0xf6fa8f9d, 0x2cac6ce1, 0x4ca34867, 0xe2337f7c, 0x95db08e7, 0x016843b4, 0xeced5cbc, 0x325553ac,
     0xbf9f0960, 0xdfa1e2ed, 0x83f0579d, 0x63ed86b9, 0x1ab6a6b8, 0xde5ebe39, 0xf38ff732, 0x8989b138,
     0x33f14961, 0xc01937bd, 0xf506c6da, 0xe4625e7e, 0xa308ea99, 0x4e23e33c, 0x79cbd7cc, 0x48a14367,
@@ -560,7 +360,7 @@ const Cast128::sBlock Cast128::S6 = {
     0xa2d762cf, 0x49c92f54, 0x38b5f331, 0x7128a454, 0x48392905, 0xa65b1db8, 0x851c97bd, 0xd675cf2f
 };
 
-const Cast128::sBlock Cast128::S7 = {
+const CAST128::SType CAST128::S7 = {
     0x85e04019, 0x332bf567, 0x662dbfff, 0xcfc65693, 0x2a8d7f6f, 0xab9bc912, 0xde6008a1, 0x2028da1f,
     0x0227bce7, 0x4d642916, 0x18fac300, 0x50f18b82, 0x2cb2cb11, 0xb232e75c, 0x4b3695f2, 0xb28707de,
     0xa05fbcf6, 0xcd4181e9, 0xe150210c, 0xe24ef1bd, 0xb168c381, 0xfde4e789, 0x5c79b0d8, 0x1e8bfd43,
@@ -595,7 +395,7 @@ const Cast128::sBlock Cast128::S7 = {
     0x518f36b2, 0x84b1d370, 0x0fedce83, 0x878ddada, 0xf2a279c7, 0x94e01be8, 0x90716f4b, 0x954b8aa3
 };
 
-const Cast128::sBlock Cast128::S8 = {
+const CAST128::SType CAST128::S8 = {
     0xe216300d, 0xbbddfffc, 0xa7ebdabd, 0x35648095, 0x7789f8b7, 0xe6c1121b, 0x0e241600, 0x052ce8b5,
     0x11a9cfb0, 0xe5952f11, 0xece7990a, 0x9386d174, 0x2a42931c, 0x76e38111, 0xb12def3a, 0x37ddddfc,
     0xde9adeb1, 0x0a0cc32c, 0xbe197029, 0x84a00940, 0xbb243a0f, 0xb4d137cf, 0xb44e79f0, 0x049eedfd,

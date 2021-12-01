@@ -1,47 +1,38 @@
-#pragma once
-#include <cstdint>
-#include <string>
-static const int keyLength = 128;
-static const int blockLength = 64;
-static const int keysCount = 32;
-static const int roundCount = 16;
+#ifndef CAST128_H
+#define CAST128_H
 
-class Cast128 {
+#include <Qt>
+
+class CAST128 {
 public:
-    typedef uint32_t uint;
-    typedef uint8_t uint8;
-    typedef uint Key[keyLength / 8];
-    struct Block {
-        uint Msg[blockLength / 8];
+    enum {
+        KEY_LEN = 128 / 32,
+        MSG_LEN = 2
     };
 
-private:
-    static Cast128::uint8 getByte(Cast128::Key key, Cast128::uint8 i);
-    static Cast128::uint* generateKeys(const Cast128::Key key);
-    static void writeLastBlock(std::ofstream& out, Cast128::Block v);
-
-private:
-    typedef uint sBlock[256];
-    static const sBlock S1;
-    static const sBlock S2;
-    static const sBlock S3;
-    static const sBlock S4;
-    static const sBlock S5;
-    static const sBlock S6;
-    static const sBlock S7;
-    static const sBlock S8;
+    typedef quint32 Key[ KEY_LEN ];
+    typedef quint32 Message[ MSG_LEN ];
 
 public:
-    static void generateKey(std::string outFileName);
-    static Block encrypt(const Key key, const Block msg);
-    static Block decrypt(const Key key, const Block msg);
-    static void readKey(const std::string path, Key* key);
-    static uint sumMod2_32(uint a, uint b);
-    static Block go(const Key key, const Block msg, bool isEncrypt);
-    static uint subtractMod2_32(uint a, uint b);
-    static uint cyclicShift(uint x, uint8 shift);
-    static void splitI(uint I, uint8* Ia, uint8* Ib, uint8* Ic, uint8* Id);
-    static void encryptFile(std::string inputFileName, std::string outFileName, Cast128::Key key);
-    static void decryptFile(std::string inputFileName, std::string outFileName, Cast128::Key key);
-    static void correlation(std::string src, std::string encr);
+    CAST128();
+
+    void encrypt( const Key key, Message msg );
+    void decrypt( const Key key, Message msg );
+
+private:
+    void run( const Key key, Message msg, bool reverse = false );
+
+private:
+    typedef quint32 SType[ 256 ];
+
+    static const SType S1;
+    static const SType S2;
+    static const SType S3;
+    static const SType S4;
+    static const SType S5;
+    static const SType S6;
+    static const SType S7;
+    static const SType S8;
 };
+
+#endif // CAST128_H
