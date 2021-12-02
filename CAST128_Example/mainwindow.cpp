@@ -32,7 +32,10 @@ MainWindow::MainWindow(QWidget* parent)
     }
 
     QRandomGenerator gen;
-    ui->line_key->setText(QString::fromUtf8(QByteArray::number(gen.generate64()).toHex()));
+    QByteArray temp {};
+    QDataStream in(&temp, QIODevice::WriteOnly);
+    in << gen.generate();
+    ui->line_key->setText(QString::fromUtf8(temp.toHex()));
 }
 
 MainWindow::~MainWindow()
@@ -45,27 +48,36 @@ void MainWindow::on_btn_encrypt_clicked()
     auto keyStr = QByteArray::fromHex(ui->line_key->text().toUtf8());
     auto msgStr = ui->line_msg->text().toUtf8();
 
-    msgStr = QByteArray::fromHex("01234567");
+    // Addition to 4 (to work with any size of msg)
+    while (msgStr.size() % 4 != 0)
+        msgStr.push_back('\0');
 
     // Create key
     CAST128::Key key {};
-    QDataStream in(keyStr);
-    for (int i = 0; i < CAST128::KEY_LEN; ++i)
-        in >> key[i];
+    {
+        QDataStream in(keyStr);
+        for (int i = 0; i < CAST128::KEY_LEN; ++i)
+            in >> key[i];
+    }
 
     // Create message & encrypt
     QByteArray encrypted {};
-    QDataStream res(&encrypted, QIODevice::ReadWrite);
-    CAST128 cast128;
-    in << msgStr;
-    while (!in.atEnd())
     {
-        CAST128::Message part {};
+        QDataStream res(&encrypted, QIODevice::WriteOnly);
+        CAST128 cast128;
+        QDataStream in(msgStr);
+        while (!in.atEnd())
+        {
+            CAST128::Message part {};
 
-        for (int i = 0; i < CAST128::MSG_LEN; ++i)
-            in >> key[i - 1];
+            for (int i = 0; i < CAST128::MSG_LEN; ++i)
+                in >> part[i];
 
-        cast128.encrypt(key, part);
+            cast128.encrypt(key, part);
+
+            for (int i = 0; i < CAST128::MSG_LEN; ++i)
+                res << part[i];
+        }
     }
 
     ui->line_encrypted->setText(QString::fromUtf8(encrypted.toHex()));
@@ -73,9 +85,40 @@ void MainWindow::on_btn_encrypt_clicked()
 
 void MainWindow::on_btn_decrypt_clicked()
 {
-    auto encrypted = QByteArray::fromHex(ui->line_encrypted->text().toUtf8());
-    auto key = QByteArray::fromHex(ui->line_key->text().toUtf8());
+    auto encryptedStr = QByteArray::fromHex(ui->line_encrypted->text().toUtf8());
+    auto keyStr = QByteArray::fromHex(ui->line_key->text().toUtf8());
 
+    // Create key
+    CAST128::Key key {};
+    {
+        QDataStream in(keyStr);
+        for (int i = 0; i < CAST128::KEY_LEN; ++i)
+            in >> key[i];
+    }
 
-    ui->line_decrypted->setText(QString::fromUtf8(""));
+    // Create message & decrypt
+    QByteArray decrypted {};
+    {
+        QDataStream res(&decrypted, QIODevice::WriteOnly);
+        CAST128 cast128;
+        QDataStream in(encryptedStr);
+        while (!in.atEnd())
+        {
+            CAST128::Message part {};
+
+            for (int i = 0; i < CAST128::MSG_LEN; ++i)
+                in >> part[i];
+
+            cast128.decrypt(key, part);
+
+            for (int i = 0; i < CAST128::MSG_LEN; ++i)
+                res << part[i];
+        }
+    }
+
+    // delete \0 at end
+    while (decrypted.back() == '\0')
+        decrypted.remove(decrypted.size() - 1, 1);
+
+    ui->line_decrypted->setText(QString::fromUtf8(decrypted));
 }
