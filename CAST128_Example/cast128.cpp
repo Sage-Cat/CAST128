@@ -1,44 +1,34 @@
 #include "cast128.h"
 
 #include <cstring>
-#include <iostream>
-#include <iomanip>
 
 static const int ROUND_COUNT = 16;
-static const quint64 MOD_2_32 = quint64( 2 ) << 31;
-
-static const quint8 K_MAP[ sizeof( CAST128::Key ) ] = {
-     3,  2,  1,  0,
-     7,  6,  5,  4,
-    11, 10,  9,  8,
-    15, 14, 13, 12
-};
-
-static quint8 g( const CAST128::Key key, quint8 i ) {
-    return ( ( quint8* ) key )[ K_MAP[ i ] ];
+static std::uint8_t g( const CAST128::Key key, std::uint8_t i ) {
+    const std::uint8_t word = i / 4;
+    const std::uint8_t shift = 24 - ( i % 4 ) * 8;
+    return static_cast<std::uint8_t>( key[ word ] >> shift );
 }
 
-static void splitI( quint32 I, quint8* Ia, quint8* Ib, quint8* Ic, quint8* Id ) {
+static void splitI( std::uint32_t I, std::uint8_t* Ia, std::uint8_t* Ib, std::uint8_t* Ic, std::uint8_t* Id ) {
     *Ia = ( I >> 24 ) & 0xFF;
     *Ib = ( I >> 16 ) & 0xFF;
     *Ic = ( I >> 8  ) & 0xFF;
     *Id = ( I       ) & 0xFF;
 }
 
-static quint32 sumMod2_32( quint32 a, quint32 b ) {
-    return ( quint64( a ) + quint64( b ) ) % MOD_2_32;
+static std::uint32_t sumMod2_32( std::uint32_t a, std::uint32_t b ) {
+    return a + b;
 }
 
-static quint32 subtractMod2_32( quint32 a, quint32 b ) {
-    if( b <= a ) {
-        return a - b;
+static std::uint32_t subtractMod2_32( std::uint32_t a, std::uint32_t b ) {
+    return a - b;
+}
+
+static std::uint32_t cyclicShift( std::uint32_t x, std::uint8_t shift ) {
+    const std::uint8_t s = shift % 32;
+    if( s == 0 ) {
+        return x;
     }
-
-    return ( MOD_2_32 + a ) - b;
-}
-
-static quint32 cyclicShift( quint32 x, quint8 shift ) {
-    quint8 s = shift % 32;
     return ( x << s ) | ( x >> ( 32 - s ) );
 }
 
@@ -62,7 +52,7 @@ void CAST128::run( const CAST128::Key key, CAST128::Message msg, bool reverse ) 
 
     Key z = { 0 };
 
-    quint32 K[ 32 ] = { 0 };
+    std::uint32_t K[ 32 ] = { 0 };
 
     for( int i = 0; i < 2; ++i ) {
         z[ 0 ] = x[ 0 ] ^ S5[ g( x, 0xD ) ] ^ S6[ g( x, 0xF ) ] ^ S7[ g( x, 0xC ) ] ^ S8[ g( x, 0xE ) ] ^ S7[ g( x, 0x8 ) ];
@@ -106,21 +96,21 @@ void CAST128::run( const CAST128::Key key, CAST128::Message msg, bool reverse ) 
         K[ 15 + i * 16 ] = S5[ g( x, 0xE ) ] ^ S6[ g( x, 0xF ) ] ^ S7[ g( x, 0x1 ) ] ^ S8[ g( x, 0x0 ) ] ^ S8[ g( x, 0xD ) ];
     }
 
-    quint32 L[ ROUND_COUNT + 1 ] = { 0 };
+    std::uint32_t L[ ROUND_COUNT + 1 ] = { 0 };
     L[ 0 ] = msg[ 0 ];
 
-    quint32 R[ ROUND_COUNT + 1 ] = { 0 };
+    std::uint32_t R[ ROUND_COUNT + 1 ] = { 0 };
     R[ 0 ] = msg[ 1 ];
 
     for( int i = 0; i < ROUND_COUNT; ++i ) {
         int rIndex = reverse ? ( ROUND_COUNT - 1 - i ) : i;
-        quint32 Kmi = K[ rIndex ];
-        quint8  Kri = K[ 16 + rIndex ] & 0x1F;
+        std::uint32_t Kmi = K[ rIndex ];
+        std::uint8_t  Kri = K[ 16 + rIndex ] & 0x1F;
 
-        quint32 I = 0;
-        quint32 f = 0;
+        std::uint32_t I = 0;
+        std::uint32_t f = 0;
 
-        quint8 Ia, Ib, Ic, Id;
+        std::uint8_t Ia, Ib, Ic, Id;
 
         switch( rIndex % 3 ) {
         case 0:

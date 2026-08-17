@@ -15,8 +15,6 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
-    static const size_t BYTE_SIZE = 8; // in bits
-
 private slots:
     void on_btn_encrypt_clicked();
     void on_btn_decrypt_clicked();

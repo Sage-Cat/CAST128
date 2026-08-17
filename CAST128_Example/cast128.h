@@ -1,7 +1,7 @@
 #ifndef CAST128_H
 #define CAST128_H
 
-#include <Qt>
+#include <cstdint>
 
 class CAST128 {
 public:
@@ -10,8 +10,8 @@ public:
         MSG_LEN = 2
     };
 
-    typedef quint32 Key[ KEY_LEN ];
-    typedef quint32 Message[ MSG_LEN ];
+    typedef std::uint32_t Key[ KEY_LEN ];
+    typedef std::uint32_t Message[ MSG_LEN ];
 
 public:
     CAST128();
@@ -23,7 +23,7 @@ private:
     void run( const Key key, Message msg, bool reverse = false );
 
 private:
-    typedef quint32 SType[ 256 ];
+    typedef std::uint32_t SType[ 256 ];
 
     static const SType S1;
     static const SType S2;

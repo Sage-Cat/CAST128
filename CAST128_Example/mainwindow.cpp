@@ -4,12 +4,12 @@
 #include <QRandomGenerator>
 
 #include <QByteArray>
-#include <QtEndian>
+#include <QDataStream>
 #include <QIODevice>
+#include <QMessageBox>
+#include <QRegularExpression>
 
 #include "cast128.h"
-
-using namespace std;
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -17,25 +17,12 @@ MainWindow::MainWindow(QWidget* parent)
 {
     ui->setupUi(this);
 
-    // TEST
-    {
-        // #1
-        CAST128 cast128;
-        static const CAST128::Key KEY = { 0x01234567, 0x12345678, 0x23456789, 0x3456789A };
-        CAST128::Message msg = { 0x01234567, 0x89ABCDEF };
-
-        cast128.encrypt( KEY, msg );
-        Q_ASSERT(msg[0] == 0x238B4FE5);
-
-        cast128.decrypt( KEY, msg );
-        Q_ASSERT(msg[0] == 0x01234567);
-    }
-
-    QRandomGenerator gen;
     QByteArray temp {};
-    QDataStream in(&temp, QIODevice::WriteOnly);
-    in << gen.generate();
+    QDataStream out(&temp, QIODevice::WriteOnly);
+    for (int i = 0; i < CAST128::KEY_LEN; ++i)
+        out << QRandomGenerator::system()->generate();
     ui->line_key->setText(QString::fromUtf8(temp.toHex()));
+    ui->line_key->setMaxLength(CAST128::KEY_LEN * 8);
 }
 
 MainWindow::~MainWindow()
@@ -45,11 +32,18 @@ MainWindow::~MainWindow()
 
 void MainWindow::on_btn_encrypt_clicked()
 {
-    auto keyStr = QByteArray::fromHex(ui->line_key->text().toUtf8());
+    const QString keyText = ui->line_key->text();
+    static const QRegularExpression hexKey(QStringLiteral("^[0-9A-Fa-f]{32}$"));
+    if (!hexKey.match(keyText).hasMatch()) {
+        QMessageBox::warning(this, tr("Invalid key"), tr("Enter exactly 32 hexadecimal key characters."));
+        return;
+    }
+
+    auto keyStr = QByteArray::fromHex(keyText.toUtf8());
     auto msgStr = ui->line_msg->text().toUtf8();
 
-    // Addition to 4 (to work with any size of msg)
-    while (msgStr.size() % 4 != 0)
+    // Zero-pad to CAST-128's eight-byte block size.
+    while (msgStr.size() % 8 != 0)
         msgStr.push_back('\0');
 
     // Create key
@@ -85,8 +79,21 @@ void MainWindow::on_btn_encrypt_clicked()
 
 void MainWindow::on_btn_decrypt_clicked()
 {
-    auto encryptedStr = QByteArray::fromHex(ui->line_encrypted->text().toUtf8());
-    auto keyStr = QByteArray::fromHex(ui->line_key->text().toUtf8());
+    const QString keyText = ui->line_key->text();
+    const QString encryptedText = ui->line_encrypted->text();
+    static const QRegularExpression hexKey(QStringLiteral("^[0-9A-Fa-f]{32}$"));
+    static const QRegularExpression hexData(QStringLiteral("^(?:[0-9A-Fa-f]{16})*$"));
+    if (!hexKey.match(keyText).hasMatch()) {
+        QMessageBox::warning(this, tr("Invalid key"), tr("Enter exactly 32 hexadecimal key characters."));
+        return;
+    }
+    if (!hexData.match(encryptedText).hasMatch()) {
+        QMessageBox::warning(this, tr("Invalid ciphertext"), tr("Enter hexadecimal data in complete 8-byte blocks (16 characters each)."));
+        return;
+    }
+
+    auto encryptedStr = QByteArray::fromHex(encryptedText.toUtf8());
+    auto keyStr = QByteArray::fromHex(keyText.toUtf8());
 
     // Create key
     CAST128::Key key {};
@@ -117,7 +124,7 @@ void MainWindow::on_btn_decrypt_clicked()
     }
 
     // delete \0 at end
-    while (decrypted.back() == '\0')
+    while (!decrypted.isEmpty() && decrypted.back() == '\0')
         decrypted.remove(decrypted.size() - 1, 1);
 
     ui->line_decrypted->setText(QString::fromUtf8(decrypted));
